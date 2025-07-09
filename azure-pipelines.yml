@@ -1,0 +1,53 @@
+trigger:
+  - main
+
+variables:
+  imageName: 'k8sapp'
+  acrLoginServer: 'k8sappacr.azurecr.io'
+  kubernetesNamespace: 'default'
+
+pool:
+  name: 'default'
+
+stages:
+- stage: BuildAndPush
+  displayName: 'Build and Push to ACR'
+  jobs:
+  - job: DockerBuild
+    steps:
+    - task: Docker@2
+      displayName: 'Build and push Docker image to ACR'
+      inputs:
+        containerRegistry: 'AzureContainerRegistryConnection'
+        command: 'buildAndPush'
+        repository: $(imageName)
+        dockerfile: 'app/Dockerfile'
+        buildContext: 'app'
+        tags: |
+          latest
+
+- stage: DeployToAKS
+  displayName: 'Deploy to AKS'
+  dependsOn: BuildAndPush
+  jobs:
+  - job: Deploy
+    steps:
+    - script: |
+        cd modules
+        terraform init
+        terraform apply -auto-approve
+      displayName: 'Run Terraform Apply'
+
+    - task: Kubernetes@1
+      displayName: 'Deploy to AKS'
+      inputs:
+        connectionType: 'Azure Resource Manager'
+        azureSubscriptionEndpoint: 'k8sapp-az'
+        azureResourceGroup: 'k8sapp'
+        kubernetesCluster: 'k8sappcluster'
+        namespace: $(kubernetesNamespace)
+        command: apply
+        useConfigurationFile: true
+        configuration: |
+          k8s-manifests/deployment.yaml
+          k8s-manifests/service.yaml
