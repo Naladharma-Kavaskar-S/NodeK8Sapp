@@ -10,10 +10,13 @@ pool:
   name: 'default'
 
 stages:
+
+#Build and Push Docker Image to Azure Container Registry (ACR)
 - stage: BuildAndPush
   displayName: 'Build and Push to ACR'
   jobs:
   - job: DockerBuild
+    displayName: 'Build Docker Image'    
     steps:
     - task: Docker@2
       displayName: 'Build and push Docker image to ACR'
@@ -26,28 +29,45 @@ stages:
         tags: |
           latest
 
-- stage: DeployToAKS
-  displayName: 'Deploy to AKS'
+#Deploy Infrastructure using Terraform
+- stage: DeployInfrastructure
+  displayName: 'Deploy Infrastructure via Terraform'
   dependsOn: BuildAndPush
   jobs:
-  - job: Deploy
-    steps:
-    - script: |
-        cd modules
-        terraform init
-        terraform apply -auto-approve
-      displayName: 'Run Terraform Apply'
+    - job: Terraform
+      displayName: 'Run Terraform'
+      steps:
+        - task: PowerShell@2
+          displayName: 'Terraform Init'
+          inputs:
+            targetType: 'inline'
+            workingDirectory: 'modules'
+            script: |
+              terraform -chdir=modules init
 
-    - task: Kubernetes@1
-      displayName: 'Deploy to AKS'
-      inputs:
-        connectionType: 'Azure Resource Manager'
-        azureSubscriptionEndpoint: 'k8sapp-az'
-        azureResourceGroup: 'k8sapp'
-        kubernetesCluster: 'k8sappcluster'
-        namespace: $(kubernetesNamespace)
-        command: apply
-        useConfigurationFile: true
-        configuration: |
-          k8s-manifests/deployment.yaml
-          k8s-manifests/service.yaml
+        - task: PowerShell@2
+          displayName: 'Terraform Apply'
+          inputs:
+            targetType: 'inline'
+            workingDirectory: 'modules'
+            script: |
+              terraform -chdir=modules apply -auto-approve
+
+#Deploy Application to Azure Kubernetes Service (AKS)
+- stage: DeployToAKS
+  displayName: 'Deploy App to AKS'
+  dependsOn: DeployInfrastructure
+  jobs:       
+    - job: DeployApp
+      displayName: 'Deploy Kubernetes Manifests'
+      steps: 
+        - task: KubernetesManifest@1
+          displayName: 'Deploy to AKS'
+          inputs:
+            action: deploy
+            kubernetesServiceConnection: 'k8sapp-az'
+            namespace: $(kubernetesNamespace)
+            manifests: |
+              k8s-manifests/deployment.yaml
+              k8s-manifests/service.yaml
+              
